@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { DEMO_LIMIT } from "@/lib/session";
-import { languageDisplay } from "@/lib/languages";
+import { LANGUAGE_NAMES, languageDisplay } from "@/lib/languages";
+
+const REPLY_LANGUAGE_OPTIONS = Object.entries(LANGUAGE_NAMES)
+  .map(([code, { label, flag }]) => ({ code, label, flag }))
+  .sort((a, b) => a.label.localeCompare(b.label, "cs"));
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -99,6 +103,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
   const [translatedReply, setTranslatedReply] = useState<string | null>(null);
   const [translateError, setTranslateError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [replyTargetLang, setReplyTargetLang] = useState("");
 
   // ── Step 1: Analyze ────────────────────────────────────────────────────────
 
@@ -136,6 +141,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
       console.log("[MagyarMail] Analysis done, tone:", parsed.tone);
       setAnalysis(parsed);
       setCzechReply(stripBoldMarkers(typeof parsed.czechReply === "string" ? parsed.czechReply : String(parsed.czechReply ?? "")));
+      setReplyTargetLang(parsed.sourceLang);
       setRemaining((r) => Math.max(0, r - 1));
     } catch (err) {
       console.error("[MagyarMail] Analyze error:", err);
@@ -150,7 +156,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
   async function handleTranslateReply() {
     const czechReplyStr = String(czechReply ?? "");
     if (!czechReplyStr.trim()) { setTranslateError("Text odpovědi je prázdný."); return; }
-    if (!analysis?.sourceLang) { setTranslateError("Neznámý cílový jazyk — nejdřív analyzujte e-mail."); return; }
+    if (!replyTargetLang) { setTranslateError("Vyberte cílový jazyk odpovědi."); return; }
 
     setTranslating(true);
     setTranslateError(null);
@@ -161,7 +167,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
       const res = await fetch("/api/translate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ czechReply: czechReplyStr, targetLang: analysis.sourceLang }),
+        body: JSON.stringify({ czechReply: czechReplyStr, targetLang: replyTargetLang }),
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -223,7 +229,8 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
 
   const toneKey = analysis?.tone?.toLowerCase() ?? "";
   const tone = TONE_CONFIG[toneKey] ?? { label: analysis?.tone ?? "", bg: "#F3F4F6", text: "#374151", dot: "#6B7280" };
-  const sourceLang = analysis ? languageDisplay(analysis.sourceLang) : null;
+  const detectedLang = analysis ? languageDisplay(analysis.sourceLang) : null;
+  const replyLang = replyTargetLang ? languageDisplay(replyTargetLang) : detectedLang;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -348,7 +355,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
                   Překlad e-mailu do češtiny
                 </p>
                 <span className="text-xs px-2 py-1 rounded-md" style={{ backgroundColor: "hsl(var(--secondary))", color: "hsl(var(--muted-foreground))" }}>
-                  {sourceLang?.flag ?? "🌐"} {sourceLang?.label ?? ""} → 🇨🇿 Čeština
+                  {detectedLang?.flag ?? "🌐"} {detectedLang?.label ?? ""} → 🇨🇿 Čeština
                 </span>
               </div>
               <p className="text-sm leading-relaxed whitespace-pre-wrap"
@@ -370,8 +377,25 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
                 </span>
               </div>
               <p className="text-xs mb-3" style={{ color: "hsl(var(--muted-foreground))" }}>
-                AI navrhla odpověď níže. Upravte ji dle potřeby, pak ji přeložte zpět do originálního jazyka ({sourceLang?.flag ?? "🌐"} {sourceLang?.label ?? "?"}).
+                AI navrhla odpověď níže. Upravte ji dle potřeby, pak ji přeložte do zvoleného jazyka.
               </p>
+
+              {/* Reply target language */}
+              <div className="mb-3">
+                <label className="text-xs font-medium mb-2 block" style={{ color: "hsl(var(--muted-foreground))" }}>
+                  Jazyk odpovědi {detectedLang && <>(automaticky {detectedLang.flag} {detectedLang.label} podle příchozího e-mailu, lze změnit):</>}
+                </label>
+                <select
+                  value={replyTargetLang}
+                  onChange={(e) => setReplyTargetLang(e.target.value)}
+                  className="w-full sm:w-auto rounded-lg px-3 py-2 text-sm outline-none"
+                  style={{ border: "1px solid hsl(var(--border))", backgroundColor: "hsl(var(--background))", color: "hsl(var(--foreground))" }}
+                >
+                  {REPLY_LANGUAGE_OPTIONS.map(({ code, label, flag }) => (
+                    <option key={code} value={code}>{flag} {label}</option>
+                  ))}
+                </select>
+              </div>
 
               {/* Tone selector */}
               <div className="mb-3">
@@ -424,7 +448,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6" />
                     </svg>
-                    Přeložit odpověď zpět ({sourceLang?.flag ?? "🌐"} {sourceLang?.label ?? "originál"})
+                    Přeložit odpověď zpět ({replyLang?.flag ?? "🌐"} {replyLang?.label ?? "originál"})
                   </>}
                 </button>
               </div>
@@ -439,7 +463,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
 
                 <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                   <div>
-                    <p className="text-sm font-semibold" style={{ color: "hsl(var(--foreground))" }}>Odpověď ({sourceLang?.flag ?? "🌐"} {sourceLang?.label ?? "originál"}) — připravena k odeslání</p>
+                    <p className="text-sm font-semibold" style={{ color: "hsl(var(--foreground))" }}>Odpověď ({replyLang?.flag ?? "🌐"} {replyLang?.label ?? "originál"}) — připravena k odeslání</p>
                     <p className="text-xs mt-0.5" style={{ color: "hsl(var(--muted-foreground))" }}>Otevřete přímo v e-mailovém klientu nebo zkopírujte text</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
