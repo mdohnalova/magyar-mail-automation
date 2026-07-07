@@ -10,7 +10,8 @@ Respond ONLY with valid JSON (no markdown, no code blocks) with exactly these fi
 - czechReply: a formal professional Czech reply to this email. LANGUAGE: Czech only. FORMATTING: greeting on its own first line, blank line after greeting, body in paragraphs separated by blank lines, closing phrase (e.g. "S pozdravem,") on its own last line. Use **double asterisks** around key phrases, deadlines, or action items.
 CRITICAL RULES:
 1. "czechReply" must be written entirely in CZECH.
-2. Do not add commentary or notes inside any field.`;
+2. Do not add commentary or notes inside any field.
+3. The email may contain placeholder tokens like [JMENO_1], [EMAIL_1], [TELEFON_1] standing in for redacted personal data. Copy every such token EXACTLY as-is (same brackets, same text) wherever that information belongs — never translate, alter, or remove them.`;
 
 interface DeeplResult {
   text: string;

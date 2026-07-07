@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { DEMO_LIMIT } from "@/lib/session";
 import { LANGUAGE_NAMES, languageDisplay } from "@/lib/languages";
+import { maskPII, remaskPII, unmaskPII } from "@/lib/pii";
 
 const REPLY_LANGUAGE_OPTIONS = Object.entries(LANGUAGE_NAMES)
   .map(([code, { label, flag }]) => ({ code, label, flag }))
@@ -104,6 +105,8 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
   const [translateError, setTranslateError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [replyTargetLang, setReplyTargetLang] = useState("");
+  const [piiMap, setPiiMap] = useState<Record<string, string>>({});
+  const [maskedEmail, setMaskedEmail] = useState("");
 
   // ── Step 1: Analyze ────────────────────────────────────────────────────────
 
@@ -126,10 +129,15 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
     console.log("[MagyarMail] Calling /api/analyze...");
 
     try {
+      const { maskedText, map } = maskPII(email);
+      setPiiMap(map);
+      setMaskedEmail(maskedText);
+      console.log(`[MagyarMail] Masked ${Object.keys(map).length} PII item(s) before sending`);
+
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: maskedText }),
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -137,10 +145,15 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
       try { data = await res.json(); } catch { /* proxy returned non-JSON */ }
       if (!res.ok) throw new Error((data?.error as string) || `Chyba serveru (HTTP ${res.status})`);
 
-      const parsed: AnalysisResult = data;
+      const parsed: AnalysisResult = {
+        ...data,
+        translation: unmaskPII(String(data?.translation ?? ""), map),
+        summary: unmaskPII(String(data?.summary ?? ""), map),
+        czechReply: unmaskPII(String(data?.czechReply ?? ""), map),
+      };
       console.log("[MagyarMail] Analysis done, tone:", parsed.tone);
       setAnalysis(parsed);
-      setCzechReply(stripBoldMarkers(typeof parsed.czechReply === "string" ? parsed.czechReply : String(parsed.czechReply ?? "")));
+      setCzechReply(stripBoldMarkers(parsed.czechReply));
       setReplyTargetLang(parsed.sourceLang);
       setRemaining((r) => Math.max(0, r - 1));
     } catch (err) {
@@ -167,7 +180,7 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
       const res = await fetch("/api/translate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ czechReply: czechReplyStr, targetLang: replyTargetLang }),
+        body: JSON.stringify({ czechReply: remaskPII(czechReplyStr, piiMap), targetLang: replyTargetLang }),
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,7 +192,7 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
       if (!translated) throw new Error("Prázdná odpověď od AI.");
 
       console.log("[MagyarMail] Translation done");
-      setTranslatedReply(translated);
+      setTranslatedReply(unmaskPII(translated, piiMap));
     } catch (err) {
       console.error("[MagyarMail] Translate error:", err);
       setTranslateError(err instanceof Error ? err.message : "Neočekávaná chyba.");
@@ -198,7 +211,7 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
       const res = await fetch("/api/regenerate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, tone }),
+        body: JSON.stringify({ email: maskedEmail || email, tone }),
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let data: any = {};
@@ -206,7 +219,7 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
       if (!res.ok) throw new Error((data?.error as string) || `Chyba serveru (HTTP ${res.status})`);
       const reply = data?.czechReply as string | undefined;
       if (!reply) throw new Error("Prázdná odpověď od AI.");
-      setCzechReply(stripBoldMarkers(reply));
+      setCzechReply(stripBoldMarkers(unmaskPII(reply, piiMap)));
       console.log(`[MagyarMail] Tone reply done (${reply.length} chars)`);
     } catch (err) {
       console.error("[MagyarMail] Tone error:", err);
@@ -362,6 +375,18 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
                 style={{ color: "hsl(var(--foreground))", borderLeft: "3px solid var(--mm-red)", paddingLeft: "1rem" }}>
                 {analysis.translation}
               </p>
+              {Object.keys(piiMap).length > 0 && (
+                <details className="text-xs mt-3" style={{ color: "hsl(var(--muted-foreground))" }}>
+                  <summary className="cursor-pointer select-none">
+                    🔒 Před odesláním AI zamaskováno {Object.keys(piiMap).length} osobních údajů
+                  </summary>
+                  <ul className="mt-1.5 space-y-0.5 pl-4 list-disc">
+                    {Object.entries(piiMap).map(([token, value]) => (
+                      <li key={token}>{token} → {value}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
 
             {/* Czech reply editor */}

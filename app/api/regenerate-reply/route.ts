@@ -23,6 +23,7 @@ FORMATTING RULES (strictly follow):
 6. Use **double asterisks** around important phrases, deadlines, key requests, or action items (e.g. **do 48 hodin**, **vrácení platby**)
 
 LANGUAGE: Reply must be written entirely in CZECH.
+PLACEHOLDERS: The source email may contain tokens like [JMENO_1], [EMAIL_1], [TELEFON_1] standing in for redacted personal data. Copy every such token EXACTLY as-is wherever that information belongs — never translate, alter, or remove them.
 OUTPUT: Return only the email text. No explanations, no notes, no JSON.`;
 }
 
