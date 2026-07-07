@@ -1,19 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE } from "@/lib/session";
+import { SESSION_COOKIE, SESSION_DEMO, SESSION_FULL } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
   const accessCode = process.env.ACCESS_CODE?.trim();
-  if (!accessCode) {
-    return NextResponse.json({ error: "Přístupový kód není na serveru nastaven." }, { status: 500 });
-  }
+  const fullAccessCode = process.env.FULL_ACCESS_CODE?.trim();
 
   const { code } = await req.json();
-  if (typeof code !== "string" || code.trim() !== accessCode) {
+  const trimmedCode = typeof code === "string" ? code.trim() : "";
+
+  let session: string | null = null;
+  if (accessCode && trimmedCode === accessCode) session = SESSION_DEMO;
+  else if (fullAccessCode && trimmedCode === fullAccessCode) session = SESSION_FULL;
+
+  if (!session) {
     return NextResponse.json({ error: "Nesprávný přístupový kód." }, { status: 401 });
   }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(SESSION_COOKIE, "granted", {
+  res.cookies.set(SESSION_COOKIE, session, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

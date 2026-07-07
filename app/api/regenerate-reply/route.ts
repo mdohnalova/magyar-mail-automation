@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE } from "@/lib/session";
+import { SESSION_COOKIE, isValidSession } from "@/lib/session";
 
 const TONE_INSTRUCTIONS: Record<string, string> = {
   Formální:   "Write in a formal, professional tone. Use polite forms of address, avoid contractions, maintain respectful distance.",
@@ -27,7 +27,7 @@ OUTPUT: Return only the email text. No explanations, no notes, no JSON.`;
 }
 
 export async function POST(req: NextRequest) {
-  if (req.cookies.get(SESSION_COOKIE)?.value !== "granted") {
+  if (!isValidSession(req.cookies.get(SESSION_COOKIE)?.value)) {
     return NextResponse.json({ error: "Přístup odepřen." }, { status: 401 });
   }
 

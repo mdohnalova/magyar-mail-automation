@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DEMO_LIMIT, SESSION_COOKIE, USAGE_COOKIE, parseUsageCount } from "@/lib/session";
+import { DEMO_LIMIT, SESSION_COOKIE, SESSION_FULL, USAGE_COOKIE, isValidSession, parseUsageCount } from "@/lib/session";
 
 // Groq handles tone, summary, and Czech reply suggestion only
 const GROQ_PROMPT = `You are a business email assistant specializing in international customer support.
@@ -51,12 +51,14 @@ async function deeplTranslate(text: string, targetLang: string, apiKey: string):
 }
 
 export async function POST(req: NextRequest) {
-  if (req.cookies.get(SESSION_COOKIE)?.value !== "granted") {
+  const session = req.cookies.get(SESSION_COOKIE)?.value;
+  if (!isValidSession(session)) {
     return NextResponse.json({ error: "Přístup odepřen." }, { status: 401 });
   }
+  const unlimited = session === SESSION_FULL;
 
   const used = parseUsageCount(req.cookies.get(USAGE_COOKIE)?.value);
-  if (used >= DEMO_LIMIT) {
+  if (!unlimited && used >= DEMO_LIMIT) {
     return NextResponse.json({ error: `Demo limit (${DEMO_LIMIT} e-maily) byl vyčerpán.` }, { status: 403 });
   }
 
@@ -116,13 +118,15 @@ export async function POST(req: NextRequest) {
       tone: parsed.tone,
       czechReply: parsed.czechReply,
     });
-    res.cookies.set(USAGE_COOKIE, String(used + 1), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30,
-    });
+    if (!unlimited) {
+      res.cookies.set(USAGE_COOKIE, String(used + 1), {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30,
+      });
+    }
     return res;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Neočekávaná chyba.";

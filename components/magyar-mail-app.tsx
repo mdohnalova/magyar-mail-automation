@@ -86,7 +86,7 @@ function ErrorBox({ message }: { message: string }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }) {
+export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemaining: number; unlimited: boolean }) {
   // Step 1 — analysis
   const [email, setEmail] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
@@ -117,7 +117,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
 
   async function handleAnalyze() {
     if (!email.trim()) { setAnalyzeError("Vložte prosím text e-mailu."); return; }
-    if (remaining <= 0) { setAnalyzeError(`Demo limit (${DEMO_LIMIT} e-maily) byl vyčerpán.`); return; }
+    if (!unlimited && remaining <= 0) { setAnalyzeError(`Demo limit (${DEMO_LIMIT} e-maily) byl vyčerpán.`); return; }
 
     setAnalyzing(true);
     setAnalyzeError(null);
@@ -253,8 +253,8 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
             </div>
 
             <span className="text-xs px-2.5 py-1 rounded-full font-medium shrink-0"
-              style={{ backgroundColor: remaining > 0 ? "hsl(var(--secondary))" : "#FEE2E2", color: remaining > 0 ? "hsl(var(--muted-foreground))" : "#B91C1C" }}>
-              Demo: zbývá {remaining} z {DEMO_LIMIT} e-mailů
+              style={{ backgroundColor: unlimited || remaining > 0 ? "hsl(var(--secondary))" : "#FEE2E2", color: unlimited || remaining > 0 ? "hsl(var(--muted-foreground))" : "#B91C1C" }}>
+              {unlimited ? "Neomezený přístup" : `Demo: zbývá ${remaining} z ${DEMO_LIMIT} e-mailů`}
             </span>
 
           </div>
@@ -303,7 +303,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
             </span>
             <button
               onClick={handleAnalyze}
-              disabled={analyzing || !email.trim() || remaining <= 0}
+              disabled={analyzing || !email.trim() || (!unlimited && remaining <= 0)}
               className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ backgroundColor: "var(--mm-red)", color: "white", boxShadow: analyzing ? "none" : "0 2px 8px rgba(185,28,28,0.2)" }}
             >

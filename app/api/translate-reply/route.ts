@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE } from "@/lib/session";
+import { SESSION_COOKIE, isValidSession } from "@/lib/session";
 import { toDeeplTargetLang } from "@/lib/languages";
 
 export async function POST(req: NextRequest) {
-  if (req.cookies.get(SESSION_COOKIE)?.value !== "granted") {
+  if (!isValidSession(req.cookies.get(SESSION_COOKIE)?.value)) {
     return NextResponse.json({ error: "Přístup odepřen." }, { status: 401 });
   }
 
