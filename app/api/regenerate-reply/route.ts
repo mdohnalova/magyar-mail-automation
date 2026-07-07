@@ -10,7 +10,7 @@ const TONE_INSTRUCTIONS: Record<string, string> = {
 
 function buildPrompt(tone: string): string {
   const instruction = TONE_INSTRUCTIONS[tone] ?? TONE_INSTRUCTIONS["Formální"];
-  return `You are a professional business email assistant. Generate a Czech reply to the Hungarian email below.
+  return `You are a professional business email assistant. Generate a Czech reply to the foreign-language business email below.
 
 TONE: ${tone} — ${instruction}
 
@@ -22,7 +22,7 @@ FORMATTING RULES (strictly follow):
 5. Leave the signature line blank (just write "S pozdravem," or similar and stop — do not invent a name)
 6. Use **double asterisks** around important phrases, deadlines, key requests, or action items (e.g. **do 48 hodin**, **vrácení platby**)
 
-LANGUAGE: Reply must be written entirely in CZECH. Never use Hungarian or English in the reply.
+LANGUAGE: Reply must be written entirely in CZECH.
 OUTPUT: Return only the email text. No explanations, no notes, no JSON.`;
 }
 

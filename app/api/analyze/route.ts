@@ -2,24 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { DEMO_LIMIT, SESSION_COOKIE, USAGE_COOKIE, parseUsageCount } from "@/lib/session";
 
 // Groq handles tone, summary, and Czech reply suggestion only
-const GROQ_PROMPT = `You are a business email assistant specializing in Hungarian-Czech communication.
-The user will send you a Hungarian business email.
+const GROQ_PROMPT = `You are a business email assistant specializing in international customer support.
+The user will send you a business email written in a foreign language.
 Respond ONLY with valid JSON (no markdown, no code blocks) with exactly these fields:
 - summary: 2-sentence Czech summary of the key points
 - tone: one word in English only — one of: formal, urgent, friendly, complaint
-- czechReply: a formal professional Czech reply to this email. LANGUAGE: Czech only — never Hungarian or English. FORMATTING: greeting on its own first line, blank line after greeting, body in paragraphs separated by blank lines, closing phrase (e.g. "S pozdravem,") on its own last line. Use **double asterisks** around key phrases, deadlines, or action items.
+- czechReply: a formal professional Czech reply to this email. LANGUAGE: Czech only. FORMATTING: greeting on its own first line, blank line after greeting, body in paragraphs separated by blank lines, closing phrase (e.g. "S pozdravem,") on its own last line. Use **double asterisks** around key phrases, deadlines, or action items.
 CRITICAL RULES:
-1. "czechReply" must be written entirely in CZECH. Never Hungarian.
+1. "czechReply" must be written entirely in CZECH.
 2. Do not add commentary or notes inside any field.`;
 
-async function deeplTranslate(text: string, sourceLang: string, targetLang: string, apiKey: string): Promise<string> {
+interface DeeplResult {
+  text: string;
+  detectedSourceLang: string;
+}
+
+async function deeplTranslate(text: string, targetLang: string, apiKey: string): Promise<DeeplResult> {
   // Free keys end with :fx → use api-free subdomain; paid keys use api subdomain
   const isFreeKey = apiKey.endsWith(":fx");
   const endpoint = isFreeKey
     ? "https://api-free.deepl.com/v2/translate"
     : "https://api.deepl.com/v2/translate";
 
-  console.log(`[deepl] Translating ${sourceLang}→${targetLang} | key length: ${apiKey.length} | free key: ${isFreeKey} | endpoint: ${endpoint}`);
+  console.log(`[deepl] Translating (auto-detect)→${targetLang} | key length: ${apiKey.length} | free key: ${isFreeKey} | endpoint: ${endpoint}`);
 
   const res = await fetch(endpoint, {
     method: "POST",
@@ -29,7 +34,6 @@ async function deeplTranslate(text: string, sourceLang: string, targetLang: stri
     },
     body: JSON.stringify({
       text: [text],
-      source_lang: sourceLang,
       target_lang: targetLang,
     }),
   });
@@ -40,10 +44,10 @@ async function deeplTranslate(text: string, sourceLang: string, targetLang: stri
     throw new Error(data?.message || `DeepL HTTP ${res.status}`);
   }
 
-  const translation = data?.translations?.[0]?.text;
-  if (!translation) throw new Error("Prázdná odpověď od DeepL.");
-  console.log(`[deepl] Done ${sourceLang}→${targetLang}`);
-  return translation;
+  const translation = data?.translations?.[0];
+  if (!translation?.text) throw new Error("Prázdná odpověď od DeepL.");
+  console.log(`[deepl] Done, detected source: ${translation.detected_source_language}`);
+  return { text: translation.text, detectedSourceLang: translation.detected_source_language };
 }
 
 export async function POST(req: NextRequest) {
@@ -72,8 +76,8 @@ export async function POST(req: NextRequest) {
 
   try {
     // Run DeepL translation and Groq analysis in parallel
-    const [translation, groqData] = await Promise.all([
-      deeplTranslate(email, "HU", "CS", deeplKey),
+    const [deeplResult, groqData] = await Promise.all([
+      deeplTranslate(email, "CS", deeplKey),
       fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -106,7 +110,8 @@ export async function POST(req: NextRequest) {
     console.log("[analyze] Done, tone:", parsed.tone);
 
     const res = NextResponse.json({
-      translation,
+      translation: deeplResult.text,
+      sourceLang: deeplResult.detectedSourceLang,
       summary: parsed.summary,
       tone: parsed.tone,
       czechReply: parsed.czechReply,
