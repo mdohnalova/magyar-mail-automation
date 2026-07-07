@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { DEMO_LIMIT } from "@/lib/session";
 import { LANGUAGE_NAMES, languageDisplay } from "@/lib/languages";
 import { maskPII, remaskPII, unmaskPII } from "@/lib/pii";
@@ -94,6 +94,8 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [remaining, setRemaining] = useState(initialRemaining);
+  const [manualMaskMap, setManualMaskMap] = useState<Record<string, string>>({});
+  const emailRef = useRef<HTMLTextAreaElement>(null);
 
   // Step 2 — reply
   const [czechReply, setCzechReply] = useState("");
@@ -115,7 +117,23 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
     setAnalysis(null);
     setTranslatedReply(null);
     setAnalyzeError(null);
+    setManualMaskMap({});
     console.log("[MagyarMail] Loaded sample email");
+  }
+
+  function maskSelection() {
+    const textarea = emailRef.current;
+    if (!textarea) return;
+    const { selectionStart, selectionEnd } = textarea;
+    if (selectionStart === selectionEnd) return;
+
+    const selected = email.slice(selectionStart, selectionEnd).trim();
+    if (!selected) return;
+
+    const token = `[RUCNI_${Object.keys(manualMaskMap).length + 1}]`;
+    setEmail(email.slice(0, selectionStart) + token + email.slice(selectionEnd));
+    setManualMaskMap((m) => ({ ...m, [token]: selected }));
+    console.log(`[MagyarMail] Manually masked selection as ${token}`);
   }
 
   async function handleAnalyze() {
@@ -129,7 +147,8 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
     console.log("[MagyarMail] Calling /api/analyze...");
 
     try {
-      const { maskedText, map } = maskPII(email);
+      const { maskedText, map: autoMap } = maskPII(email);
+      const map = { ...manualMaskMap, ...autoMap };
       setPiiMap(map);
       setMaskedEmail(maskedText);
       console.log(`[MagyarMail] Masked ${Object.keys(map).length} PII item(s) before sending`);
@@ -294,8 +313,12 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
           </div>
 
           <textarea
+            ref={emailRef}
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (!e.target.value.trim()) setManualMaskMap({});
+            }}
             placeholder="Vložte sem obchodní e-mail v cizím jazyce..."
             rows={9}
             className="w-full rounded-lg px-4 py-3 text-sm resize-y outline-none"
@@ -309,6 +332,20 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
             onFocus={(e) => { e.target.style.borderColor = "var(--mm-red)"; e.target.style.boxShadow = "0 0 0 3px rgba(185,28,28,0.08)"; }}
             onBlur={(e) => { e.target.style.borderColor = "hsl(var(--border))"; e.target.style.boxShadow = "none"; }}
           />
+
+          <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={maskSelection}
+              className="text-xs px-3 py-1.5 rounded-lg font-medium"
+              style={{ border: "1px solid hsl(var(--border))", backgroundColor: "hsl(var(--secondary))", color: "hsl(var(--foreground))" }}
+            >
+              🔒 Zamaskovat vybraný text
+            </button>
+            <span className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+              Označte myší citlivý text (jméno, adresu) a klikněte pro zamaskování
+            </span>
+          </div>
 
           <div className="flex items-center justify-between mt-3 flex-wrap gap-3">
             <span className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
