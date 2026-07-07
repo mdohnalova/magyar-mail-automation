@@ -1,19 +1,41 @@
-# ✉️ Magyar Mail Automation App
+# ✉️ Magyar Mail — asistent pro maďarskou e-mailovou komunikaci
 
-Inteligentní AI nástroj navržený pro radikální zrychlení a zefektivnění mezinárodní zákaznické podpory. Aplikace odbourává nutnost manuálního kopírování textů do externích překladačů tím, že centralizuje kompletní workflow (analýzu, překlad, generování odpovědí a odesílání) do jednoho rozhraní.
+AI nástroj pro rychlé vyřizování maďarské zákaznické podpory bez nutnosti kopírovat text do externích překladačů. Centralizuje celý workflow — analýzu, překlad, návrh odpovědi a odeslání — do jednoho rozhraní.
 
-##  Hlavní Funkcionality
+## Hlavní funkce
 
-* **Automatická kategorizace & Prioritizace:** Systém okamžitě analyzuje příchozí maďarský e-mail a přiřadí mu kategorii (např. *Stížnost*, *Urgentní*, *Dotaz na objednávku*).
-* **Kontextový překlad & Sumarizace:** Provádí přesný překlad do češtiny spolu se stručným shrnutím hlavních bodů pro bleskovou orientaci pracovníka podpory.
-* **Smart Response Generator:** Umožňuje jedním kliknutím vygenerovat odpověď na základě zvoleného tónu komunikace (*Přátelský*, *Profesionální*, *Asertivní*).
-* **Jednosměrný schvalovací proces:** Vygenerovanou odpověď lze ručně upravit, doplnit a následně jedním kliknutím nechat AI přeložit zpět do perfektní maďarštiny.
-* **Podniková integrace:** Architektura počítá s přímým napojením na e-mailové klienty (IMAP/SMTP/API) pro vyřizování agendy přímo uvnitř nástroje.
+* **Analýza a kategorizace:** e-mail se automaticky vyhodnotí a zařadí podle tónu (*Formální*, *Urgentní*, *Přátelský*, *Stížnost*).
+* **Překlad a shrnutí:** přesný překlad do češtiny + krátké shrnutí hlavních bodů pro rychlou orientaci.
+* **Návrh odpovědi ve 4 tónech:** *Formální*, *Přátelský*, *Empatický*, *Asertivní* — jedním kliknutím.
+* **Editace a zpětný překlad:** vygenerovanou odpověď lze upravit a nechat přeložit zpět do maďarštiny.
+* **Odeslání:** otevření rovnou v e-mailovém klientovi (`mailto:`) nebo zkopírování textu.
 
-##  Technologický Stack
-* **Framework:** Macaly / Python
-* **AI Engine:** OpenAI GPT / Anthropic Claude API (pro pokročilé LLM parsování textu a analýzu tónu)
-* **Localization:** Hungarian <-> Czech
+## Tech stack
 
-##  Vyzkoušejte Demo
-Aplikace obsahuje funkci **"Načíst náhodný maďarský e-mail"**, díky které si můžete celé workflow okamžitě otestovat na reálných datech.
+* **Next.js 16 (App Router)** + React 19 + TypeScript
+* **Tailwind CSS** + shadcn/ui komponenty
+* **Groq** (`llama-3.3-70b-versatile`) — analýza tónu, shrnutí, generování odpovědí
+* **DeepL API** — překlad HU ↔ CS
+* **Vitest** — testy
+* Nasazeno na **Vercelu**
+
+## Živé demo
+
+👉 [magyar-mail-automation.vercel.app](https://magyar-mail-automation.vercel.app)
+
+Demo je chráněné přístupovým kódem a omezené na 3 zpracované e-maily na návštěvníka (aby si ho nikdo neupletl s produkčním nástrojem na vlastní poštu). O přístupový kód napište autorce.
+
+## Lokální spuštění
+
+```bash
+npm install
+npm run dev
+```
+
+Potřebné proměnné prostředí (`.env.local`):
+
+```
+GROQ_API_KEY=...
+DEEPL_API_KEY=...
+ACCESS_CODE=...
+```
