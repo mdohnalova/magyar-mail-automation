@@ -1,20 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, SESSION_DEMO, SESSION_FULL } from "@/lib/session";
 
-export async function POST(req: NextRequest) {
-  const accessCode = process.env.ACCESS_CODE?.trim();
-  const fullAccessCode = process.env.FULL_ACCESS_CODE?.trim();
+const INVALID = NextResponse.json({ error: "Nesprávné jméno nebo heslo pro zvolenou verzi." }, { status: 401 });
 
-  const { code } = await req.json();
-  const trimmedCode = typeof code === "string" ? code.trim() : "";
+export async function POST(req: NextRequest) {
+  const { mode, username, password } = await req.json();
+  const trimmedUsername = typeof username === "string" ? username.trim() : "";
+  const trimmedPassword = typeof password === "string" ? password.trim() : "";
 
   let session: string | null = null;
-  if (accessCode && trimmedCode === accessCode) session = SESSION_DEMO;
-  else if (fullAccessCode && trimmedCode === fullAccessCode) session = SESSION_FULL;
 
-  if (!session) {
-    return NextResponse.json({ error: "Nesprávný přístupový kód." }, { status: 401 });
+  if (mode === "demo") {
+    const expectedUsername = process.env.ACCESS_USERNAME?.trim();
+    const expectedPassword = process.env.ACCESS_CODE?.trim();
+    if (expectedUsername && expectedPassword && trimmedUsername === expectedUsername && trimmedPassword === expectedPassword) {
+      session = SESSION_DEMO;
+    }
+  } else if (mode === "full") {
+    const expectedUsername = process.env.FULL_ACCESS_USERNAME?.trim();
+    const expectedPassword = process.env.FULL_ACCESS_CODE?.trim();
+    if (expectedUsername && expectedPassword && trimmedUsername === expectedUsername && trimmedPassword === expectedPassword) {
+      session = SESSION_FULL;
+    }
   }
+
+  if (!session) return INVALID;
 
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE, session, {
