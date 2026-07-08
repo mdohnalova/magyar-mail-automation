@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { DEMO_LIMIT } from "@/lib/session";
 import { LANGUAGE_NAMES, languageDisplay } from "@/lib/languages";
 import { maskPII, remaskPII, unmaskPII } from "@/lib/pii";
@@ -89,6 +90,13 @@ function ErrorBox({ message }: { message: string }) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemaining: number; unlimited: boolean }) {
+  const router = useRouter();
+
+  async function handleLogout() {
+    await fetch("/api/logout", { method: "POST" });
+    router.refresh();
+  }
+
   // Step 1 — analysis
   const [email, setEmail] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
@@ -354,10 +362,19 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
               </div>
             </div>
 
-            <span className="text-xs px-2.5 py-1 rounded-full font-medium shrink-0"
-              style={{ backgroundColor: unlimited || remaining > 0 ? "hsl(var(--secondary))" : "#FEE2E2", color: unlimited || remaining > 0 ? "hsl(var(--muted-foreground))" : "#B91C1C" }}>
-              {unlimited ? "Neomezený přístup" : `Demo: zbývá ${remaining} z ${DEMO_LIMIT} e-mailů`}
-            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs px-2.5 py-1 rounded-full font-medium"
+                style={{ backgroundColor: unlimited || remaining > 0 ? "hsl(var(--secondary))" : "#FEE2E2", color: unlimited || remaining > 0 ? "hsl(var(--muted-foreground))" : "#B91C1C" }}>
+                {unlimited ? "Neomezený přístup" : `Demo: zbývá ${remaining} z ${DEMO_LIMIT} e-mailů`}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="text-xs px-2.5 py-1 rounded-full font-medium"
+                style={{ border: "1px solid hsl(var(--border))", backgroundColor: "transparent", color: "hsl(var(--muted-foreground))" }}
+              >
+                Odhlásit se
+              </button>
+            </div>
 
           </div>
         </div>
