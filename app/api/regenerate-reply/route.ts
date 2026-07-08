@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE } from "@/lib/session";
+import { SESSION_COOKIE, isValidSession } from "@/lib/session";
 
 const TONE_INSTRUCTIONS: Record<string, string> = {
   Formální:   "Write in a formal, professional tone. Use polite forms of address, avoid contractions, maintain respectful distance.",
@@ -10,7 +10,7 @@ const TONE_INSTRUCTIONS: Record<string, string> = {
 
 function buildPrompt(tone: string): string {
   const instruction = TONE_INSTRUCTIONS[tone] ?? TONE_INSTRUCTIONS["Formální"];
-  return `You are a professional business email assistant. Generate a Czech reply to the Hungarian email below.
+  return `You are a professional business email assistant. Generate a Czech reply to the foreign-language business email below.
 
 TONE: ${tone} — ${instruction}
 
@@ -22,12 +22,13 @@ FORMATTING RULES (strictly follow):
 5. Leave the signature line blank (just write "S pozdravem," or similar and stop — do not invent a name)
 6. Use **double asterisks** around important phrases, deadlines, key requests, or action items (e.g. **do 48 hodin**, **vrácení platby**)
 
-LANGUAGE: Reply must be written entirely in CZECH. Never use Hungarian or English in the reply.
+LANGUAGE: Reply must be written entirely in CZECH.
+PLACEHOLDERS: The source email may contain tokens like [JMENO_1], [EMAIL_1], [TELEFON_1] standing in for redacted personal data. Copy every such token EXACTLY as-is wherever that information belongs — never translate, alter, or remove them.
 OUTPUT: Return only the email text. No explanations, no notes, no JSON.`;
 }
 
 export async function POST(req: NextRequest) {
-  if (req.cookies.get(SESSION_COOKIE)?.value !== "granted") {
+  if (!isValidSession(req.cookies.get(SESSION_COOKIE)?.value)) {
     return NextResponse.json({ error: "Přístup odepřen." }, { status: 401 });
   }
 

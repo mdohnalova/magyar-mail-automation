@@ -1,12 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEMO_LIMIT } from "@/lib/session";
+import { LANGUAGE_NAMES, languageDisplay } from "@/lib/languages";
+import { maskPII, remaskPII, unmaskPII } from "@/lib/pii";
+import type { GmailMessage } from "@/lib/gmail";
+
+const REPLY_LANGUAGE_OPTIONS = Object.entries(LANGUAGE_NAMES)
+  .map(([code, { label, flag }]) => ({ code, label, flag }))
+  .sort((a, b) => a.label.localeCompare(b.label, "cs"));
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface AnalysisResult {
   translation: string;
+  sourceLang: string;
   summary: string;
   tone: string;
   czechReply: string;
@@ -80,13 +88,15 @@ function ErrorBox({ message }: { message: string }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }) {
+export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemaining: number; unlimited: boolean }) {
   // Step 1 — analysis
   const [email, setEmail] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [remaining, setRemaining] = useState(initialRemaining);
+  const [manualMaskMap, setManualMaskMap] = useState<Record<string, string>>({});
+  const emailRef = useRef<HTMLTextAreaElement>(null);
 
   // Step 2 — reply
   const [czechReply, setCzechReply] = useState("");
@@ -94,35 +104,129 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
   const [toneLoading, setToneLoading] = useState(false);
   const [toneError, setToneError] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
-  const [hungarianReply, setHungarianReply] = useState<string | null>(null);
+  const [translatedReply, setTranslatedReply] = useState<string | null>(null);
   const [translateError, setTranslateError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [replyTargetLang, setReplyTargetLang] = useState("");
+  const [piiMap, setPiiMap] = useState<Record<string, string>>({});
+  const [maskedEmail, setMaskedEmail] = useState("");
+
+  // Gmail (personal use only — hidden for demo sessions)
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const [gmailMessages, setGmailMessages] = useState<GmailMessage[]>([]);
+  const [gmailLoading, setGmailLoading] = useState(false);
+  const [gmailError, setGmailError] = useState<string | null>(null);
+  const [gmailMeta, setGmailMeta] = useState<GmailMessage | null>(null);
+  const [draftCreating, setDraftCreating] = useState(false);
+  const [draftCreated, setDraftCreated] = useState(false);
+
+  useEffect(() => {
+    if (!unlimited) return;
+    fetch("/api/gmail/status")
+      .then((r) => r.json())
+      .then((d) => setGmailConnected(Boolean(d?.connected)))
+      .catch(() => {});
+  }, [unlimited]);
+
+  async function loadGmailInbox() {
+    setGmailLoading(true);
+    setGmailError(null);
+    try {
+      const res = await fetch("/api/gmail/inbox");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Chyba serveru (HTTP ${res.status})`);
+      setGmailMessages(data.messages ?? []);
+    } catch (err) {
+      setGmailError(err instanceof Error ? err.message : "Neočekávaná chyba.");
+    } finally {
+      setGmailLoading(false);
+    }
+  }
+
+  function selectGmailMessage(msg: GmailMessage) {
+    setEmail(msg.body);
+    setGmailMeta(msg);
+    setAnalysis(null);
+    setTranslatedReply(null);
+    setAnalyzeError(null);
+    setManualMaskMap({});
+    setDraftCreated(false);
+  }
+
+  async function createGmailDraft() {
+    if (!gmailMeta || !translatedReply) return;
+    setDraftCreating(true);
+    setGmailError(null);
+    try {
+      const res = await fetch("/api/gmail/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: gmailMeta.threadId,
+          to: gmailMeta.from,
+          subject: gmailMeta.subject,
+          inReplyTo: gmailMeta.messageIdHeader,
+          body: translatedReply,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Chyba serveru (HTTP ${res.status})`);
+      setDraftCreated(true);
+    } catch (err) {
+      setGmailError(err instanceof Error ? err.message : "Neočekávaná chyba.");
+    } finally {
+      setDraftCreating(false);
+    }
+  }
 
   // ── Step 1: Analyze ────────────────────────────────────────────────────────
 
   function loadSample() {
     setEmail(SAMPLE_EMAIL);
     setAnalysis(null);
-    setHungarianReply(null);
+    setTranslatedReply(null);
     setAnalyzeError(null);
+    setGmailMeta(null);
+    setManualMaskMap({});
     console.log("[MagyarMail] Loaded sample email");
+  }
+
+  function maskSelection() {
+    const textarea = emailRef.current;
+    if (!textarea) return;
+    const { selectionStart, selectionEnd } = textarea;
+    if (selectionStart === selectionEnd) return;
+
+    const selected = email.slice(selectionStart, selectionEnd).trim();
+    if (!selected) return;
+
+    const token = `[RUCNI_${Object.keys(manualMaskMap).length + 1}]`;
+    setEmail(email.slice(0, selectionStart) + token + email.slice(selectionEnd));
+    setManualMaskMap((m) => ({ ...m, [token]: selected }));
+    console.log(`[MagyarMail] Manually masked selection as ${token}`);
   }
 
   async function handleAnalyze() {
     if (!email.trim()) { setAnalyzeError("Vložte prosím text e-mailu."); return; }
-    if (remaining <= 0) { setAnalyzeError(`Demo limit (${DEMO_LIMIT} e-maily) byl vyčerpán.`); return; }
+    if (!unlimited && remaining <= 0) { setAnalyzeError(`Demo limit (${DEMO_LIMIT} e-maily) byl vyčerpán.`); return; }
 
     setAnalyzing(true);
     setAnalyzeError(null);
     setAnalysis(null);
-    setHungarianReply(null);
+    setTranslatedReply(null);
     console.log("[MagyarMail] Calling /api/analyze...");
 
     try {
+      const { maskedText, map: autoMap } = maskPII(email);
+      const map = { ...manualMaskMap, ...autoMap };
+      setPiiMap(map);
+      setMaskedEmail(maskedText);
+      console.log(`[MagyarMail] Masked ${Object.keys(map).length} PII item(s) before sending`);
+
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: maskedText }),
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -130,10 +234,16 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
       try { data = await res.json(); } catch { /* proxy returned non-JSON */ }
       if (!res.ok) throw new Error((data?.error as string) || `Chyba serveru (HTTP ${res.status})`);
 
-      const parsed: AnalysisResult = data;
+      const parsed: AnalysisResult = {
+        ...data,
+        translation: unmaskPII(String(data?.translation ?? ""), map),
+        summary: unmaskPII(String(data?.summary ?? ""), map),
+        czechReply: unmaskPII(String(data?.czechReply ?? ""), map),
+      };
       console.log("[MagyarMail] Analysis done, tone:", parsed.tone);
       setAnalysis(parsed);
-      setCzechReply(stripBoldMarkers(typeof parsed.czechReply === "string" ? parsed.czechReply : String(parsed.czechReply ?? "")));
+      setCzechReply(stripBoldMarkers(parsed.czechReply));
+      setReplyTargetLang(parsed.sourceLang);
       setRemaining((r) => Math.max(0, r - 1));
     } catch (err) {
       console.error("[MagyarMail] Analyze error:", err);
@@ -148,17 +258,18 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
   async function handleTranslateReply() {
     const czechReplyStr = String(czechReply ?? "");
     if (!czechReplyStr.trim()) { setTranslateError("Text odpovědi je prázdný."); return; }
+    if (!replyTargetLang) { setTranslateError("Vyberte cílový jazyk odpovědi."); return; }
 
     setTranslating(true);
     setTranslateError(null);
-    setHungarianReply(null);
+    setTranslatedReply(null);
     console.log("[MagyarMail] Calling /api/translate-reply...");
 
     try {
       const res = await fetch("/api/translate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ czechReply: czechReplyStr }),
+        body: JSON.stringify({ czechReply: remaskPII(czechReplyStr, piiMap), targetLang: replyTargetLang }),
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -170,7 +281,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
       if (!translated) throw new Error("Prázdná odpověď od AI.");
 
       console.log("[MagyarMail] Translation done");
-      setHungarianReply(translated);
+      setTranslatedReply(unmaskPII(translated, piiMap));
     } catch (err) {
       console.error("[MagyarMail] Translate error:", err);
       setTranslateError(err instanceof Error ? err.message : "Neočekávaná chyba.");
@@ -189,7 +300,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
       const res = await fetch("/api/regenerate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, tone }),
+        body: JSON.stringify({ email: maskedEmail || email, tone }),
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let data: any = {};
@@ -197,7 +308,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
       if (!res.ok) throw new Error((data?.error as string) || `Chyba serveru (HTTP ${res.status})`);
       const reply = data?.czechReply as string | undefined;
       if (!reply) throw new Error("Prázdná odpověď od AI.");
-      setCzechReply(stripBoldMarkers(reply));
+      setCzechReply(stripBoldMarkers(unmaskPII(reply, piiMap)));
       console.log(`[MagyarMail] Tone reply done (${reply.length} chars)`);
     } catch (err) {
       console.error("[MagyarMail] Tone error:", err);
@@ -208,9 +319,9 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
   }
 
   async function handleCopy() {
-    if (!hungarianReply) return;
+    if (!translatedReply) return;
     try {
-      await navigator.clipboard.writeText(hungarianReply);
+      await navigator.clipboard.writeText(translatedReply);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch { console.error("[MagyarMail] Copy failed"); }
@@ -220,6 +331,8 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
 
   const toneKey = analysis?.tone?.toLowerCase() ?? "";
   const tone = TONE_CONFIG[toneKey] ?? { label: analysis?.tone ?? "", bg: "#F3F4F6", text: "#374151", dot: "#6B7280" };
+  const detectedLang = analysis ? languageDisplay(analysis.sourceLang) : null;
+  const replyLang = replyTargetLang ? languageDisplay(replyTargetLang) : detectedLang;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -237,13 +350,13 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
                 style={{ backgroundColor: "var(--mm-red)" }}>MM</div>
               <div>
                 <h1 className="font-display text-lg leading-none" style={{ color: "hsl(var(--foreground))" }}>Magyar Mail</h1>
-                <p className="text-xs mt-0.5" style={{ color: "hsl(var(--muted-foreground))" }}>Asistent pro maďarskou e-mailovou komunikaci</p>
+                <p className="text-xs mt-0.5" style={{ color: "hsl(var(--muted-foreground))" }}>Asistent pro mezinárodní e-mailovou komunikaci</p>
               </div>
             </div>
 
             <span className="text-xs px-2.5 py-1 rounded-full font-medium shrink-0"
-              style={{ backgroundColor: remaining > 0 ? "hsl(var(--secondary))" : "#FEE2E2", color: remaining > 0 ? "hsl(var(--muted-foreground))" : "#B91C1C" }}>
-              Demo: zbývá {remaining} z {DEMO_LIMIT} e-mailů
+              style={{ backgroundColor: unlimited || remaining > 0 ? "hsl(var(--secondary))" : "#FEE2E2", color: unlimited || remaining > 0 ? "hsl(var(--muted-foreground))" : "#B91C1C" }}>
+              {unlimited ? "Neomezený přístup" : `Demo: zbývá ${remaining} z ${DEMO_LIMIT} e-mailů`}
             </span>
 
           </div>
@@ -252,13 +365,70 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-5">
 
+        {/* ── Gmail (personal use only) ── */}
+        {unlimited && (
+          <section className="rounded-xl p-5 sm:p-6"
+            style={{ backgroundColor: "white", border: "1px solid hsl(var(--border))", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <label className="text-sm font-semibold" style={{ color: "hsl(var(--foreground))" }}>
+                📥 Moje schránka (Gmail)
+              </label>
+              {gmailConnected && (
+                <button
+                  onClick={loadGmailInbox}
+                  disabled={gmailLoading}
+                  className="text-xs px-3 py-1.5 rounded-lg font-medium disabled:opacity-50"
+                  style={{ border: "1px solid hsl(var(--border))", backgroundColor: "hsl(var(--secondary))", color: "hsl(var(--foreground))" }}
+                >
+                  {gmailLoading ? "Načítám..." : "Načíst nepřečtené"}
+                </button>
+              )}
+            </div>
+
+            {!gmailConnected ? (
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+                  Propojte svůj Gmail, ať sem nemusíte e-maily kopírovat ručně.
+                </p>
+                <a
+                  href="/api/gmail/connect"
+                  className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+                  style={{ backgroundColor: "var(--mm-red)", color: "white" }}
+                >
+                  Připojit Gmail
+                </a>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {gmailMessages.length === 0 && !gmailLoading && (
+                  <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+                    Klikněte na "Načíst nepřečtené" pro zobrazení schránky.
+                  </p>
+                )}
+                {gmailMessages.map((msg) => (
+                  <button
+                    key={msg.id}
+                    onClick={() => selectGmailMessage(msg)}
+                    className="w-full text-left rounded-lg px-3 py-2 text-xs"
+                    style={{ border: "1px solid hsl(var(--border))", backgroundColor: gmailMeta?.id === msg.id ? "hsl(var(--secondary))" : "transparent" }}
+                  >
+                    <p className="font-semibold truncate" style={{ color: "hsl(var(--foreground))" }}>{msg.subject || "(bez předmětu)"}</p>
+                    <p className="truncate" style={{ color: "hsl(var(--muted-foreground))" }}>{msg.from} — {msg.snippet}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+            {gmailError && <p className="text-xs mt-2" style={{ color: "var(--mm-red)" }}>{gmailError}</p>}
+          </section>
+        )}
+
         {/* ── STEP 1: Input ── */}
         <section className="rounded-xl p-5 sm:p-6"
           style={{ backgroundColor: "white", border: "1px solid hsl(var(--border))", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
 
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <label className="text-sm font-semibold" style={{ color: "hsl(var(--foreground))" }}>
-              Krok 1 — Vložte maďarský e-mail
+              Krok 1 — Vložte e-mail v cizím jazyce
             </label>
             <button
               onClick={loadSample}
@@ -270,9 +440,14 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
           </div>
 
           <textarea
+            ref={emailRef}
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Vložte sem maďarský obchodní e-mail..."
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (!e.target.value.trim()) setManualMaskMap({});
+              if (gmailMeta && e.target.value !== gmailMeta.body) setGmailMeta(null);
+            }}
+            placeholder="Vložte sem obchodní e-mail v cizím jazyce..."
             rows={9}
             className="w-full rounded-lg px-4 py-3 text-sm resize-y outline-none"
             style={{
@@ -286,13 +461,27 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
             onBlur={(e) => { e.target.style.borderColor = "hsl(var(--border))"; e.target.style.boxShadow = "none"; }}
           />
 
+          <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={maskSelection}
+              className="text-xs px-3 py-1.5 rounded-lg font-medium"
+              style={{ border: "1px solid hsl(var(--border))", backgroundColor: "hsl(var(--secondary))", color: "hsl(var(--foreground))" }}
+            >
+              🔒 Zamaskovat vybraný text
+            </button>
+            <span className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+              Označte myší citlivý text (jméno, adresu) a klikněte pro zamaskování
+            </span>
+          </div>
+
           <div className="flex items-center justify-between mt-3 flex-wrap gap-3">
             <span className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
               {email.length > 0 ? `${email.length} znaků` : "Zatím žádný text"}
             </span>
             <button
               onClick={handleAnalyze}
-              disabled={analyzing || !email.trim() || remaining <= 0}
+              disabled={analyzing || !email.trim() || (!unlimited && remaining <= 0)}
               className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ backgroundColor: "var(--mm-red)", color: "white", boxShadow: analyzing ? "none" : "0 2px 8px rgba(185,28,28,0.2)" }}
             >
@@ -344,13 +533,25 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
                   Překlad e-mailu do češtiny
                 </p>
                 <span className="text-xs px-2 py-1 rounded-md" style={{ backgroundColor: "hsl(var(--secondary))", color: "hsl(var(--muted-foreground))" }}>
-                  🇭🇺 → 🇨🇿
+                  {detectedLang?.flag ?? "🌐"} {detectedLang?.label ?? ""} → 🇨🇿 Čeština
                 </span>
               </div>
               <p className="text-sm leading-relaxed whitespace-pre-wrap"
                 style={{ color: "hsl(var(--foreground))", borderLeft: "3px solid var(--mm-red)", paddingLeft: "1rem" }}>
                 {analysis.translation}
               </p>
+              {Object.keys(piiMap).length > 0 && (
+                <details className="text-xs mt-3" style={{ color: "hsl(var(--muted-foreground))" }}>
+                  <summary className="cursor-pointer select-none">
+                    🔒 Před odesláním AI zamaskováno {Object.keys(piiMap).length} osobních údajů
+                  </summary>
+                  <ul className="mt-1.5 space-y-0.5 pl-4 list-disc">
+                    {Object.entries(piiMap).map(([token, value]) => (
+                      <li key={token}>{token} → {value}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
 
             {/* Czech reply editor */}
@@ -366,8 +567,25 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
                 </span>
               </div>
               <p className="text-xs mb-3" style={{ color: "hsl(var(--muted-foreground))" }}>
-                AI navrhla odpověď níže. Upravte ji dle potřeby, pak ji přeložte do maďarštiny.
+                AI navrhla odpověď níže. Upravte ji dle potřeby, pak ji přeložte do zvoleného jazyka.
               </p>
+
+              {/* Reply target language */}
+              <div className="mb-3">
+                <label className="text-xs font-medium mb-2 block" style={{ color: "hsl(var(--muted-foreground))" }}>
+                  Jazyk odpovědi {detectedLang && <>(automaticky {detectedLang.flag} {detectedLang.label} podle příchozího e-mailu, lze změnit):</>}
+                </label>
+                <select
+                  value={replyTargetLang}
+                  onChange={(e) => setReplyTargetLang(e.target.value)}
+                  className="w-full sm:w-auto rounded-lg px-3 py-2 text-sm outline-none"
+                  style={{ border: "1px solid hsl(var(--border))", backgroundColor: "hsl(var(--background))", color: "hsl(var(--foreground))" }}
+                >
+                  {REPLY_LANGUAGE_OPTIONS.map(({ code, label, flag }) => (
+                    <option key={code} value={code}>{flag} {label}</option>
+                  ))}
+                </select>
+              </div>
 
               {/* Tone selector */}
               <div className="mb-3">
@@ -420,7 +638,7 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6" />
                     </svg>
-                    Přeložit odpověď do maďarštiny
+                    Přeložit odpověď zpět ({replyLang?.flag ?? "🌐"} {replyLang?.label ?? "originál"})
                   </>}
                 </button>
               </div>
@@ -428,19 +646,19 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
 
             {translateError && <ErrorBox message={translateError} />}
 
-            {/* Hungarian reply output */}
-            {hungarianReply && (
+            {/* Translated reply output */}
+            {translatedReply && (
               <div className="rounded-xl p-5 sm:p-6 mm-fade-in"
                 style={{ backgroundColor: "white", border: "2px solid var(--mm-red)", boxShadow: "0 2px 12px rgba(185,28,28,0.1)" }}>
 
                 <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                   <div>
-                    <p className="text-sm font-semibold" style={{ color: "hsl(var(--foreground))" }}>Maďarská odpověď — připravena k odeslání</p>
+                    <p className="text-sm font-semibold" style={{ color: "hsl(var(--foreground))" }}>Odpověď ({replyLang?.flag ?? "🌐"} {replyLang?.label ?? "originál"}) — připravena k odeslání</p>
                     <p className="text-xs mt-0.5" style={{ color: "hsl(var(--muted-foreground))" }}>Otevřete přímo v e-mailovém klientu nebo zkopírujte text</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                   <a
-                    href={`mailto:?body=${encodeURIComponent(hungarianReply)}`}
+                    href={`mailto:?body=${encodeURIComponent(translatedReply)}`}
                     className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium"
                     style={{
                       backgroundColor: "var(--mm-red)",
@@ -471,8 +689,24 @@ export function MagyarMailApp({ initialRemaining }: { initialRemaining: number }
 
                 <p className="text-sm leading-relaxed"
                   style={{ color: "hsl(var(--foreground))", borderLeft: "3px solid var(--mm-red)", paddingLeft: "1rem" }}>
-                  {renderFormatted(hungarianReply ?? "")}
+                  {renderFormatted(translatedReply ?? "")}
                 </p>
+
+                {gmailMeta && (
+                  <div className="flex items-center gap-3 mt-4 pt-4 flex-wrap" style={{ borderTop: "1px solid hsl(var(--border))" }}>
+                    <button
+                      onClick={createGmailDraft}
+                      disabled={draftCreating || draftCreated}
+                      className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50"
+                      style={{ backgroundColor: draftCreated ? "#D1FAE5" : "#1E3A5F", color: draftCreated ? "#065F46" : "white" }}
+                    >
+                      {draftCreating ? "Vytvářím koncept..." : draftCreated ? "✓ Koncept vytvořen v Gmailu" : "📧 Vytvořit koncept v Gmailu"}
+                    </button>
+                    <span className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+                      Appka jen připraví koncept — odeslání provedete sama v Gmailu.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
