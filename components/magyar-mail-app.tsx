@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEMO_LIMIT } from "@/lib/session";
 import { LANGUAGE_NAMES, languageDisplay } from "@/lib/languages";
 import { maskPII, remaskPII, unmaskPII } from "@/lib/pii";
+import type { GmailMessage } from "@/lib/gmail";
 
 const REPLY_LANGUAGE_OPTIONS = Object.entries(LANGUAGE_NAMES)
   .map(([code, { label, flag }]) => ({ code, label, flag }))
@@ -110,6 +111,74 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
   const [piiMap, setPiiMap] = useState<Record<string, string>>({});
   const [maskedEmail, setMaskedEmail] = useState("");
 
+  // Gmail (personal use only — hidden for demo sessions)
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const [gmailMessages, setGmailMessages] = useState<GmailMessage[]>([]);
+  const [gmailLoading, setGmailLoading] = useState(false);
+  const [gmailError, setGmailError] = useState<string | null>(null);
+  const [gmailMeta, setGmailMeta] = useState<GmailMessage | null>(null);
+  const [draftCreating, setDraftCreating] = useState(false);
+  const [draftCreated, setDraftCreated] = useState(false);
+
+  useEffect(() => {
+    if (!unlimited) return;
+    fetch("/api/gmail/status")
+      .then((r) => r.json())
+      .then((d) => setGmailConnected(Boolean(d?.connected)))
+      .catch(() => {});
+  }, [unlimited]);
+
+  async function loadGmailInbox() {
+    setGmailLoading(true);
+    setGmailError(null);
+    try {
+      const res = await fetch("/api/gmail/inbox");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Chyba serveru (HTTP ${res.status})`);
+      setGmailMessages(data.messages ?? []);
+    } catch (err) {
+      setGmailError(err instanceof Error ? err.message : "Neočekávaná chyba.");
+    } finally {
+      setGmailLoading(false);
+    }
+  }
+
+  function selectGmailMessage(msg: GmailMessage) {
+    setEmail(msg.body);
+    setGmailMeta(msg);
+    setAnalysis(null);
+    setTranslatedReply(null);
+    setAnalyzeError(null);
+    setManualMaskMap({});
+    setDraftCreated(false);
+  }
+
+  async function createGmailDraft() {
+    if (!gmailMeta || !translatedReply) return;
+    setDraftCreating(true);
+    setGmailError(null);
+    try {
+      const res = await fetch("/api/gmail/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: gmailMeta.threadId,
+          to: gmailMeta.from,
+          subject: gmailMeta.subject,
+          inReplyTo: gmailMeta.messageIdHeader,
+          body: translatedReply,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Chyba serveru (HTTP ${res.status})`);
+      setDraftCreated(true);
+    } catch (err) {
+      setGmailError(err instanceof Error ? err.message : "Neočekávaná chyba.");
+    } finally {
+      setDraftCreating(false);
+    }
+  }
+
   // ── Step 1: Analyze ────────────────────────────────────────────────────────
 
   function loadSample() {
@@ -117,6 +186,7 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
     setAnalysis(null);
     setTranslatedReply(null);
     setAnalyzeError(null);
+    setGmailMeta(null);
     setManualMaskMap({});
     console.log("[MagyarMail] Loaded sample email");
   }
@@ -295,6 +365,63 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-5">
 
+        {/* ── Gmail (personal use only) ── */}
+        {unlimited && (
+          <section className="rounded-xl p-5 sm:p-6"
+            style={{ backgroundColor: "white", border: "1px solid hsl(var(--border))", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <label className="text-sm font-semibold" style={{ color: "hsl(var(--foreground))" }}>
+                📥 Moje schránka (Gmail)
+              </label>
+              {gmailConnected && (
+                <button
+                  onClick={loadGmailInbox}
+                  disabled={gmailLoading}
+                  className="text-xs px-3 py-1.5 rounded-lg font-medium disabled:opacity-50"
+                  style={{ border: "1px solid hsl(var(--border))", backgroundColor: "hsl(var(--secondary))", color: "hsl(var(--foreground))" }}
+                >
+                  {gmailLoading ? "Načítám..." : "Načíst nepřečtené"}
+                </button>
+              )}
+            </div>
+
+            {!gmailConnected ? (
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+                  Propojte svůj Gmail, ať sem nemusíte e-maily kopírovat ručně.
+                </p>
+                <a
+                  href="/api/gmail/connect"
+                  className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+                  style={{ backgroundColor: "var(--mm-red)", color: "white" }}
+                >
+                  Připojit Gmail
+                </a>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {gmailMessages.length === 0 && !gmailLoading && (
+                  <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+                    Klikněte na "Načíst nepřečtené" pro zobrazení schránky.
+                  </p>
+                )}
+                {gmailMessages.map((msg) => (
+                  <button
+                    key={msg.id}
+                    onClick={() => selectGmailMessage(msg)}
+                    className="w-full text-left rounded-lg px-3 py-2 text-xs"
+                    style={{ border: "1px solid hsl(var(--border))", backgroundColor: gmailMeta?.id === msg.id ? "hsl(var(--secondary))" : "transparent" }}
+                  >
+                    <p className="font-semibold truncate" style={{ color: "hsl(var(--foreground))" }}>{msg.subject || "(bez předmětu)"}</p>
+                    <p className="truncate" style={{ color: "hsl(var(--muted-foreground))" }}>{msg.from} — {msg.snippet}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+            {gmailError && <p className="text-xs mt-2" style={{ color: "var(--mm-red)" }}>{gmailError}</p>}
+          </section>
+        )}
+
         {/* ── STEP 1: Input ── */}
         <section className="rounded-xl p-5 sm:p-6"
           style={{ backgroundColor: "white", border: "1px solid hsl(var(--border))", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
@@ -318,6 +445,7 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
             onChange={(e) => {
               setEmail(e.target.value);
               if (!e.target.value.trim()) setManualMaskMap({});
+              if (gmailMeta && e.target.value !== gmailMeta.body) setGmailMeta(null);
             }}
             placeholder="Vložte sem obchodní e-mail v cizím jazyce..."
             rows={9}
@@ -563,6 +691,22 @@ export function MagyarMailApp({ initialRemaining, unlimited }: { initialRemainin
                   style={{ color: "hsl(var(--foreground))", borderLeft: "3px solid var(--mm-red)", paddingLeft: "1rem" }}>
                   {renderFormatted(translatedReply ?? "")}
                 </p>
+
+                {gmailMeta && (
+                  <div className="flex items-center gap-3 mt-4 pt-4 flex-wrap" style={{ borderTop: "1px solid hsl(var(--border))" }}>
+                    <button
+                      onClick={createGmailDraft}
+                      disabled={draftCreating || draftCreated}
+                      className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50"
+                      style={{ backgroundColor: draftCreated ? "#D1FAE5" : "#1E3A5F", color: draftCreated ? "#065F46" : "white" }}
+                    >
+                      {draftCreating ? "Vytvářím koncept..." : draftCreated ? "✓ Koncept vytvořen v Gmailu" : "📧 Vytvořit koncept v Gmailu"}
+                    </button>
+                    <span className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+                      Appka jen připraví koncept — odeslání provedete sama v Gmailu.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
